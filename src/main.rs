@@ -1,10 +1,14 @@
 use rand::Rng;
+use serde::{Deserialize, Serialize};
+use std::fs;
 use std::io::{self, Write};
 
 // This holds all data about the player's progress & resources
+#[derive(Serialize, Deserialize)]
 struct GameState {
     iron_ore: u64,
     money: u64,
+    workers: u64,
 }
 
 // Implementation block for the GameState struct, defining its associated functions/methods
@@ -14,24 +18,59 @@ impl GameState {
         GameState {
             iron_ore: 0,
             money: 0,
+            workers: 0,
         }
     }
-
-    // Game method for the 'mine' action
-    // Takes a mutable reference because it modifies the iron_ore field
-    // Returns the amount of iron ore mined
+    fn apply_passive_gain(&mut self) {
+        if self.workers > 0 {
+            const WORKER_ORE_RATE: u64 = 1;
+            let passive_gain = self.workers * WORKER_ORE_RATE;
+            self.iron_ore += passive_gain;
+        }
+    }
     fn mine(&mut self) -> u64 {
-        // Random number generator
+        // 1. Calculate Base Random Gain (1-3)
         let mut rng = rand::thread_rng();
+        let base_gain: u64 = rng.gen_range(1..=3); // Clear name: base_gain
 
-        // Generate random number between 1-3
-        let mined_amount: u64 = rng.gen_range(1..=3);
+        // 2. Calculate Worker Efficiency Bonus (Task 9 Logic)
+        // Integer division correctly applies the bonus:
+        // 0-4 workers = 0 bonus; 5-9 workers = 1 bonus; 10-14 workers = 2 bonus, etc.
+        const WORKERS_PER_BONUS: u64 = 5;
+        let worker_bonus = self.workers / WORKERS_PER_BONUS;
 
-        // Updates the game state by adding the mined amount to the iron_ore field
-        self.iron_ore += mined_amount;
+        // 3. Calculate Total Mined Amount
+        let total_mined_amount = base_gain + worker_bonus; // Clear name: total_mined_amount
+
+        // 4. Update the game state with the total amount (ONLY ONCE)
+        self.iron_ore += total_mined_amount;
+
         println!("--- Mining in progress... ---");
-        // Returns the amount of iron ore mined
-        mined_amount
+
+        // Return the total amount mined
+        total_mined_amount
+    }
+
+    // Save method
+    fn save_game(&self, filename: &str) -> Result<(), std::io::Error> {
+        let json = serde_json::to_string_pretty(self)?;
+        std::fs::write(filename, json)?;
+        Ok(())
+    }
+
+    // Load method
+    fn load_game(filename: &str) -> Result<Self, io::Error> {
+        // 1. Read the file content into a String. Uses ? to return io::Error on failure.
+        let json = fs::read_to_string(filename)?;
+
+        // 2. Deserialize the JSON string back into a GameState struct.
+        // serde_json::from_str returns a Result<GameState, serde_json::Error>.
+        // We use map_err to convert the serde_json::Error (e) into an io::Error.
+        let game_state: GameState = serde_json::from_str(&json)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
+        // 3. Return the successfully loaded GameState.
+        Ok(game_state)
     }
 }
 
@@ -45,6 +84,7 @@ fn main() {
         println!("\n--- Status ---");
         println!("Iron Ore: {}", game_state.iron_ore);
         println!("Money: {}", game_state.money);
+        println!("Workers: {}", game_state.workers);
         println!("--------------");
 
         // Prompt & Flush
@@ -74,10 +114,12 @@ fn main() {
                 println!("  mine - Mine iron ore");
                 println!("  sell - Sell iron ore");
                 println!("  quit - Quit the game");
+                println!("  hire - Hire a worker");
             }
 
             // Mine Command
             "mine" => {
+                game_state.apply_passive_gain();
                 let mined_amount = game_state.mine();
                 println!("You mined {} iron ore!", mined_amount);
             }
@@ -85,6 +127,7 @@ fn main() {
             // Sell Command
             "sell" => {
                 // Constants define the amount of ore to sell and the price per ore
+                game_state.apply_passive_gain();
                 const SELL_AMOUNT_ORE: u64 = 5;
                 const PRICE_PER_ORE: u64 = 3;
                 // Calculate the total money gain from selling the ore
@@ -96,7 +139,7 @@ fn main() {
                     game_state.iron_ore -= SELL_AMOUNT_ORE;
                     game_state.money += total_money_gain;
                     println!(
-                        "You sold {} iron ore for {} money!",
+                        "You sold {} iron ore for ${}!",
                         SELL_AMOUNT_ORE, total_money_gain
                     );
                 } else {
@@ -110,9 +153,28 @@ fn main() {
                 // The break statement exits the loop
                 break;
             }
+            // Hire Worker Command
+            "hire" => {
+                // Constants define the cost of hiring a worker
+                const HIRE_COST: u64 = 50;
+                // Check if the player has enough money to hire a worker
+                if game_state.money >= HIRE_COST {
+                    game_state.apply_passive_gain();
+                    // Subtract the cost from the player's money & update the number of workers
+                    game_state.money -= HIRE_COST;
+                    game_state.workers += 1;
+                    println!("You hired a worker for ${}!", HIRE_COST);
+                } else {
+                    // Transaction failed due to insufficient money
+                    println!("You need at least ${} to hire a worker!", HIRE_COST);
+                }
+            }
             // Catch all for unrecognized commands
             _ => {
-                println!("Invalid command: '{}'. Try 'mine' or 'quit'.", command);
+                println!(
+                    "Invalid command: '{}'. Type 'help' for a list of commands.",
+                    command
+                );
             }
         }
     }
